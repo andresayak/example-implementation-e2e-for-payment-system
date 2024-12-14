@@ -42,15 +42,12 @@ $ pnpm run start
 $ pnpm run start:dev
 
 # production mode
-$ pnpm run start:prod
+    $ pnpm run start:prod
 ```
 
 ## Test
 
 ```bash
-# unit tests
-$ pnpm run test
-
 # e2e tests
 $ pnpm run test:e2e
 
