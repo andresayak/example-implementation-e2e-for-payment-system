@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigType } from '../types';
 
 @Injectable()
 export class ConfigService {
   config: ConfigType = {
     fixedFee: 0,
     feeRate: 0,
-    duration: 0,
+    blockRate: 0,
   };
 
   save(config: ConfigType) {
@@ -14,5 +15,3 @@ export class ConfigService {
     return true;
   }
 }
-
-type ConfigType = { fixedFee: number; feeRate: number; duration: number };

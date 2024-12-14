@@ -1,28 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { StoreRepository } from '../repositories';
+import { StoreType } from '../types';
 
 @Injectable()
 export class StoreService {
-  private items: StoreType[] = [];
-  private nextId = 0;
+  constructor(private readonly repository: StoreRepository) {}
 
-  findOneByIdOrFail(id: number): StoreType {
-    const store = this.items.find((item) => item.id === id);
-    if (!store) {
-      throw new NotFoundException(`Item with id ${id} not found`);
-    }
-    return store;
-  }
-
-  create(dto: Omit<StoreType, 'id' | 'balance'>) {
-    const store: StoreType = {
+  create(dto: Pick<StoreType, 'name' | 'feeRate'>) {
+    return this.repository.create({
       ...dto,
-      id: ++this.nextId,
-      balance: 0,
-    };
-    this.items.push(store);
-
-    return store.id;
+      availableBalance: 0,
+      blockedBalance: 0,
+    });
   }
 }
-
-type StoreType = { id: number; name: string; domain: string; balance: number };

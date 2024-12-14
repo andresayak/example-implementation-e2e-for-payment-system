@@ -1,60 +1,65 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { PaymentStatus, PaymentType, StoreType } from '../types';
+import { PaymentRepository } from '../repositories';
+import { ConfigService } from './config.service';
+import * as moment from 'moment';
 
 @Injectable()
 export class PaymentService {
-  private items: PaymentType[] = [];
-  private nextId = 0;
+  constructor(
+    private readonly repository: PaymentRepository,
+    private readonly configService: ConfigService,
+  ) {}
 
-  findOneByIdOrFail(id: number): PaymentType {
-    const store = this.items.find((item) => item.id === id);
-    if (!store) {
-      throw new NotFoundException(`Item with id ${id} not found`);
-    }
-    return store;
-  }
+  purchase(store: StoreType, { amount }: Pick<PaymentType, 'amount'>) {
+    const { feeRate, fixedFee, blockRate } = this.configService.config;
 
-  purchase(storeId: number, dto: Pick<PaymentType, 'amount' | 'price'>) {
-    const item: PaymentType = {
-      ...dto,
-      storeId,
-      total: dto.amount * dto.price,
-      id: ++this.nextId,
-      status: PaymentStatus.NEW,
-    };
-    this.items.push(item);
+    const systemFeeAmount = (amount * feeRate) / 100;
+    const storeFeeAmount = (amount * store.feeRate) / 100;
+    const blockedAmount = (amount * blockRate) / 100;
+    const amountAfterFee = amount - systemFeeAmount - storeFeeAmount - fixedFee;
 
-    return item.id;
+    return this.repository.create({
+      amount,
+      storeId: store.id,
+      status: PaymentStatus.RECEIVED,
+      createdAt: new Date(),
+
+      feeAmounts: {
+        fixed: fixedFee, // A
+        system: systemFeeAmount, // B
+        store: storeFeeAmount, // C
+      },
+      availableBalance: 0,
+      amountAfterFee,
+      blockedAmount, // D
+    });
   }
 
   payments(storeId: number): PaymentType[] {
-    return this.items.filter((item) => item.id === storeId);
+    return this.repository.findManyByStoreId(storeId);
   }
 
-  update(ids: number[], status: PaymentStatus) {
-    this.items = this.items.map((item) =>
-      ids.includes(item.id) ? { ...item, status } : item,
-    );
+  processed(store: StoreType, ids: number[]): number {
+    return this.repository.process(store, ids);
   }
 
-  complete(ids: number[]) {
-    return this.update(ids, PaymentStatus.COMPLETED);
+  completed(store: StoreType, ids: number[]): number {
+    return this.repository.compete(store, ids);
+  }
+
+  rejected(store: StoreType, ids: number[]): number {
+    return this.repository.rejected(store, ids);
   }
 
   payout(storeId: number) {
-    return true;
+    return this.repository.payout(storeId);
+  }
+
+  isValidPayout(store: StoreType) {
+    return (
+      !store.lastPaymentAt ||
+      moment().subtract(1, 'day').toDate() >= store.lastPaymentAt
+    );
   }
 }
-
-enum PaymentStatus {
-  NEW = 'new',
-  COMPLETED = 'completed',
-}
-
-export type PaymentType = {
-  id: number;
-  storeId: number;
-  amount: number;
-  price: number;
-  total: number;
-  status: PaymentStatus;
-};

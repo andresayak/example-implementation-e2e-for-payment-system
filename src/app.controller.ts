@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -11,8 +12,9 @@ import { ConfigService, StoreService, PaymentService } from './services';
 import { ConfigDto } from './dto/config.dto';
 import { StoreDto } from './dto/store.dto';
 import { PaymentDto } from './dto/payment.dto';
-import { StoreRepository } from './repositories';
+import { PaymentRepository, StoreRepository } from './repositories';
 import { PaymentType, StoreType } from './types';
+import { ConfigType } from './types';
 
 @Controller()
 export class AppController {
@@ -21,16 +23,26 @@ export class AppController {
     private readonly paymentService: PaymentService,
     private readonly configService: ConfigService,
     private readonly storeRepository: StoreRepository,
+    private readonly paymentRepository: PaymentRepository,
   ) {}
 
+  @Get('config')
+  config(): ConfigType {
+    return this.configService.config;
+  }
+
   @Post('config')
-  config(@Body() dto: ConfigDto): boolean {
+  saveConfig(@Body() dto: ConfigDto): boolean {
     return this.configService.save(dto);
   }
 
   @Post('store')
-  store(@Body() dto: StoreDto): number {
-    return this.storeService.create(dto);
+  saveStore(@Body() dto: StoreDto): { id: number } {
+    const item = this.storeService.create(dto);
+
+    return {
+      id: item.id,
+    };
   }
 
   @Get('stores')
@@ -38,14 +50,23 @@ export class AppController {
     return this.storeRepository.findAll();
   }
 
-  @Post('store/:storeId/purchase')
+  @Get('store/:storeId')
+  store(@Param('storeId', ParseIntPipe) storeId: number): StoreType {
+    return this.storeRepository.findOneByIdOrFail(storeId);
+  }
+
+  @Post('store/:storeId/payment')
   payment(
     @Param('storeId', ParseIntPipe) storeId: number,
     @Body() dto: PaymentDto,
-  ): number {
+  ): { id: number } {
     const store = this.storeRepository.findOneByIdOrFail(storeId);
+    const item = this.paymentService.purchase(store, dto);
+    this.storeRepository.blockBalance(store.id, item.amountAfterFee);
 
-    return this.paymentService.purchase(store.id, dto);
+    return {
+      id: item.id,
+    };
   }
 
   @Get('store/:storeId/payments')
@@ -53,16 +74,78 @@ export class AppController {
     return this.paymentService.payments(storeId);
   }
 
-  @Post('store/:storeId/payments')
-  payments(
-    @Body('ids', new ParseArrayPipe({ items: Number, separator: ',' }))
+  @Get('store/:storeId/payment/:paymentId')
+  getPayment(
+    @Param('storeId', ParseIntPipe) storeId: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+  ): PaymentType {
+    return this.paymentRepository.findOneByIdAndStoreIdOrFail({
+      paymentId,
+      storeId,
+    });
+  }
+
+  @Post('store/:storeId/processed')
+  processed(
+    @Param('storeId', ParseIntPipe) storeId: number,
+    @Body('ids', new ParseArrayPipe({ items: Number }))
     paymentIds: number[],
   ) {
-    return this.paymentService.complete(paymentIds);
+    const store = this.storeRepository.findOneByIdOrFail(storeId);
+    const amount = this.paymentService.processed(store, paymentIds);
+    this.storeRepository.unblockBalance(store.id, amount);
+
+    return {
+      status: true,
+      amount,
+    };
+  }
+
+  @Post('store/:storeId/rejected')
+  reject(
+    @Param('storeId', ParseIntPipe) storeId: number,
+    @Body('ids', new ParseArrayPipe({ items: Number }))
+    paymentIds: number[],
+  ) {
+    const store = this.storeRepository.findOneByIdOrFail(storeId);
+    const amount = this.paymentService.rejected(store, paymentIds);
+    this.storeRepository.rejectBalance(store.id, amount);
+
+    return {
+      status: true,
+      amount,
+    };
+  }
+
+  @Post('store/:storeId/completed')
+  completed(
+    @Param('storeId', ParseIntPipe) storeId: number,
+    @Body('ids', new ParseArrayPipe({ items: Number }))
+    paymentIds: number[],
+  ) {
+    const store = this.storeRepository.findOneByIdOrFail(storeId);
+    const amount = this.paymentService.completed(store, paymentIds);
+    this.storeRepository.unblockBalance(store.id, amount);
+
+    return {
+      status: true,
+    };
   }
 
   @Post('store/:storeId/payout')
-  payouts(@Param('storeId', ParseIntPipe) storeId: number) {
-    return this.paymentService.payout(storeId);
+  payout(@Param('storeId', ParseIntPipe) storeId: number) {
+    const store = this.storeRepository.findOneByIdOrFail(storeId);
+    if (!this.paymentService.isValidPayout(store)) {
+      throw new BadRequestException('you can payout only one time per day');
+    }
+
+    const { ids, amount } = this.paymentService.payout(storeId);
+
+    this.storeRepository.payout(store.id, amount);
+
+    return {
+      ids,
+      amount,
+    };
   }
 }
